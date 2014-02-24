@@ -9,6 +9,7 @@ Idea is to facilitate pipeline of read/transform/write operations.
 The package just provides command line utilities and some basic plumbing.
 Doesn't try to make important or constricting decisions. Think flask.
 '''
+import inspect
 import collections
 
 from cement.core import backend, foundation, controller, handler
@@ -27,6 +28,8 @@ class Pipeline(object):
         self.components = components
         self.state = state
         self.controller = controller
+        set_app_shortcuts(self, controller)
+        set_app_shortcuts(state, controller)
         self.utils = utils
 
     def prepare_components(self):
@@ -34,22 +37,8 @@ class Pipeline(object):
         '''
         for comp_type in self.components:
             comp_type.state = self.state
-            cli_app = self.controller.app
-            comp_type.app = cli_app
+            set_app_shortcuts(comp_type, self.controller)
             comp_type.utils = self.utils
-
-            # App shortcuts.
-            comp_type.args = cli_app.args
-            comp_type.argv = cli_app.argv
-            comp_type.pargs = cli_app.pargs
-
-            # Logging shortcuts.
-            log = self.controller.app.log
-            comp_type.log = log
-            comp_type.info = log.info
-            comp_type.debug = log.debug
-            comp_type.error = log.error
-            comp_type.warn = log.warn
 
     def set_comp_sequence_dict(self):
         '''Set a dict on self where each comp type is mapped to the
@@ -120,8 +109,8 @@ class AppBuilder(object):
     '''Given an App object, configure a custom cement cli app,
     and run it.
     '''
-    def __init__(self, config_obj):
-        self.config_obj = config_obj
+    def __init__(self, config_cls):
+        self.config_cls = config_cls
         self.utils = Utils()
 
         # Initialize the cli app.
@@ -129,6 +118,7 @@ class AppBuilder(object):
 
     def run(self):
         try:
+            import pudb; pudb.set_trace()
             self.cli_app.setup()
             self.cli_app.run()
         finally:
@@ -138,30 +128,47 @@ class AppBuilder(object):
         '''Sets up the command line interface through cement.
         '''
         utils = self.utils
-        pipeline_state = PipelineState()
+        config_obj = self.config_cls()
+
+        # Get the pipeline state.
+        pipeline_state_cls = getattr(
+            config_obj, 'pipeline_state_cls', PipelineState)
+        pipeline_state = pipeline_state_cls()
+
+        # Get the pipeline instance.
+        pipeline_cls = getattr(config_obj, 'pipeline_cls', Pipeline)
 
         # ---------------------------------------------------------------------
         # Define the cli app controller.
         # ---------------------------------------------------------------------
         class Controller(controller.CementBaseController):
-            Meta = self.config_obj.ControllerMeta
+            Meta = config_obj.ControllerMeta
 
         # For each command defined in the banzai app, add a command line
         # flaggy thing.
-        for cmd_name, cmd_config in self.config_obj.commands.items():
+        commands = []
+        for name, member in inspect.getmembers(config_obj):
+            if not getattr(member, '_is_pipeline', False):
+                continue
+            cmd_name = name
+            cmd_config = member()
             import_prefix = cmd_config.get('import_prefix')
             components = cmd_config['components']
             components = tuple(utils.resolve_names(
                 components, module_name=import_prefix))
 
             def method(self):
-                pipeline = Pipeline(
+                pipeline = pipeline_cls(
                     components, pipeline_state,
                     controller=self, utils=utils)
                 pipeline.run()
 
             # Patch the method name to appease cement.
             method.func_name = cmd_name
+
+            # commands.append()
+
+            # Pass the metadata to command config.
             cmd_meta = cmd_config['command_meta']
             method = controller.expose(**cmd_meta)(method)
             setattr(Controller, cmd_name, method)
@@ -169,6 +176,8 @@ class AppBuilder(object):
         # ---------------------------------------------------------------------
         # Define the cli app itself.
         # ---------------------------------------------------------------------
+        import pdb;pdb.set_trace()
+        x = Controller()
         class CliApp(foundation.CementApp):
             class Meta:
                 label = 'helloworld'
@@ -194,6 +203,38 @@ class Utils:
         '''
         for name in names:
             yield self.resolve_name(name, module_name)
+
+utils = Utils()
+
+
+def set_app_shortcuts(obj, controller):
+    '''Make references to the cli app and its goodies
+    avaialable on obj.
+    '''
+    obj.utils = utils
+    obj.controller = controller
+    app = controller.app
+    obj.app = app
+
+    # App shortcuts.
+    obj.args = app.args
+    obj.argv = app.argv
+    obj.pargs = app.pargs
+
+    # Logging shortcuts.
+    log = app.log
+    obj.log = log
+    obj.info = log.info
+    obj.debug = log.debug
+    obj.error = log.error
+    obj.warn = log.warn
+
+
+def pipeline(f):
+    '''Dumb decorator for marking pipeline functions.
+    '''
+    f._is_pipeline = True
+    return f
 
 
 def run(config_obj):

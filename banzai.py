@@ -10,9 +10,9 @@ The package just provides command line utilities and some basic plumbing.
 Doesn't try to make important or constricting decisions. Think flask.
 '''
 import inspect
+import logging
+import argparse
 import collections
-
-from cement.core import backend, foundation, controller, handler
 
 
 class Pipeline(object):
@@ -24,20 +24,18 @@ class Pipeline(object):
     for each set of command components share a single state object.
     Multi-threaders beware.
     '''
-    def __init__(self, components, state, controller, utils):
-        self.components = components
-        self.state = state
-        self.controller = controller
-        set_app_shortcuts(self, controller)
-        set_app_shortcuts(state, controller)
-        self.utils = utils
+    def __init__(self):
+        self.components = []
+
+    def add_components(self, components):
+        self.components += list(components)
 
     def prepare_components(self):
         '''Make useful attributes on the components at run time.
         '''
         for comp_type in self.components:
             comp_type.state = self.state
-            set_app_shortcuts(comp_type, self.controller)
+            set_shortcuts(comp_type, self.controller)
             comp_type.utils = self.utils
 
     def set_comp_sequence_dict(self):
@@ -77,6 +75,8 @@ class Pipeline(object):
         self.set_type_instance_dict()
 
         # Set upstream and downstream attrs on each pair of comps.
+        if not self.components:
+            return
         for comp_type in self.components:
             comp = self.type_instance_dict[comp_type]
             next_comptype = self.comp_seq_dict[comp_type]
@@ -87,10 +87,19 @@ class Pipeline(object):
 
         # To run the whole sequence, we call the last one.
         # It will pull results from downstream as needed, and so on.
-        if callable(comp):
+        if hasattr(comp, '__iter__'):
+            returned_something = False
+            for token in comp:
+                pass
+                returned_something = True
+            if not returned_something:
+                msg = 'Iteratable component %r did not yield any output.'
+                self.warn(msg % comp)
+        elif callable(comp):
             comp()
         else:
-            raise TypeError('Last compoenent must be callable.')
+            raise TypeError('Last compoenent must be iterable or callable.')
+
 
         # Allow the last object the chance to finish things up.
         finalize = getattr(comp, 'finalize', None)
@@ -110,82 +119,87 @@ class AppBuilder(object):
     and run it.
     '''
     def __init__(self, config_cls):
-        self.config_cls = config_cls
+        self.config_obj = config_cls()
         self.utils = Utils()
-
-        # Initialize the cli app.
-        self.cli_app = self.get_cli_app()
-
-    def run(self):
-        try:
-            import pudb; pudb.set_trace()
-            self.cli_app.setup()
-            self.cli_app.run()
-        finally:
-            self.cli_app.close()
-
-    def get_cli_app(self):
-        '''Sets up the command line interface through cement.
-        '''
-        utils = self.utils
-        config_obj = self.config_cls()
+        self.parser = argparse.ArgumentParser()
 
         # Get the pipeline state.
         pipeline_state_cls = getattr(
-            config_obj, 'pipeline_state_cls', PipelineState)
-        pipeline_state = pipeline_state_cls()
+            self.config_obj, 'pipeline_state_cls', PipelineState)
+        self.state = pipeline_state_cls()
 
         # Get the pipeline instance.
-        pipeline_cls = getattr(config_obj, 'pipeline_cls', Pipeline)
+        self.pipeline_cls = getattr(self.config_obj, 'pipeline_cls', Pipeline)
+        self.appname = config_cls.__name__
 
-        # ---------------------------------------------------------------------
-        # Define the cli app controller.
-        # ---------------------------------------------------------------------
-        class Controller(controller.CementBaseController):
-            Meta = config_obj.ControllerMeta
+        self.init_cli_app()
+        self.set_shortcuts(self.config_obj)
 
-        # For each command defined in the banzai app, add a command line
-        # flaggy thing.
-        commands = []
-        for name, member in inspect.getmembers(config_obj):
-            if not getattr(member, '_is_pipeline', False):
-                continue
-            cmd_name = name
-            cmd_config = member()
-            import_prefix = cmd_config.get('import_prefix')
-            components = cmd_config['components']
-            components = tuple(utils.resolve_names(
-                components, module_name=import_prefix))
+    def run(self):
+        try:
+            for action in self.args.actions.split(','):
+                # Creat a pipeline.
+                pipeline = self.pipeline_cls()
+                self.set_shortcuts(pipeline)
+                self.set_shortcuts(pipeline.state)
 
-            def method(self):
-                pipeline = pipeline_cls(
-                    components, pipeline_state,
-                    controller=self, utils=utils)
+                # Try to let it resolve the command first.
+                if hasattr(self.config_obj, 'get_components'):
+                    cmd_config = self.config_obj.get_components(action)
+                    components = self.load_components(cmd_config)
+
+                # Otherwise use the top level components on the app.
+                else:
+                    command = getattr(self.config_obj, action)
+                    cmd_config = command()
+                    components = self.load_components(cmd_config)
+
+                # Add the components and run it.
+                pipeline.add_components(components)
                 pipeline.run()
 
-            # Patch the method name to appease cement.
-            method.func_name = cmd_name
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            self.post_mortem()
 
-            # commands.append()
+    def load_components(self, cmd_config):
+        import_prefix = cmd_config.get('import_prefix')
+        components = cmd_config['components']
+        components = tuple(self.utils.resolve_names(
+            components, module_name=import_prefix))
+        return components
 
-            # Pass the metadata to command config.
-            cmd_meta = cmd_config['command_meta']
-            method = controller.expose(**cmd_meta)(method)
-            setattr(Controller, cmd_name, method)
+    def init_cli_app(self):
+        '''Sets up the command line interface through cement.
+        '''
+        for args, kwargs in self.config_obj.arguments:
+            self.parser.add_argument(*args, **kwargs)
 
-        # ---------------------------------------------------------------------
-        # Define the cli app itself.
-        # ---------------------------------------------------------------------
-        import pdb;pdb.set_trace()
-        x = Controller()
-        class CliApp(foundation.CementApp):
-            class Meta:
-                label = 'helloworld'
-                base_controller = Controller
+    def set_shortcuts(self, obj):
+        set_shortcuts(obj, self)
 
-        cli_app = CliApp()
-        return cli_app
+    @property
+    def args(self):
+        args = getattr(self, '_args', None)
+        if args is None:
+            args = self._args = self.parser.parse_args()
+        return args
 
+    def post_mortem(self):
+        for debugger in ('pdb', 'pudb', 'ipdb'):
+            enabled = getattr(self.args, debugger, False)
+            if enabled:
+                try:
+                    post_mortem = self.utils.resolve_name('post_mortem', module_name=debugger)
+                except ImportError as exc:
+                    msg = (
+                        "Please install %s in order to use it "
+                        "with the post mortem debugger.")
+                    import traceback
+                    traceback.print_exc()
+                    self.state.warn(msg % debugger)
+                post_mortem()
 
 class Utils:
     '''Exposes lazy import functions.
@@ -207,34 +221,24 @@ class Utils:
 utils = Utils()
 
 
-def set_app_shortcuts(obj, controller):
+def set_shortcuts(obj, controller):
     '''Make references to the cli app and its goodies
     avaialable on obj.
     '''
     obj.utils = utils
     obj.controller = controller
-    app = controller.app
-    obj.app = app
+    obj.state = controller.state
 
     # App shortcuts.
-    obj.args = app.args
-    obj.argv = app.argv
-    obj.pargs = app.pargs
+    obj.args = controller.args
 
     # Logging shortcuts.
-    log = app.log
+    log = logging.getLogger(controller.appname)
     obj.log = log
     obj.info = log.info
     obj.debug = log.debug
     obj.error = log.error
     obj.warn = log.warn
-
-
-def pipeline(f):
-    '''Dumb decorator for marking pipeline functions.
-    '''
-    f._is_pipeline = True
-    return f
 
 
 def run(config_obj):

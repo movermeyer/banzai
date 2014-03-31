@@ -15,6 +15,9 @@ import argparse
 import collections
 
 
+__version__ = '0'
+
+
 class Pipeline(object):
     '''The main function of banzai, this class executes sequences of
     components by inspecting each one, soliciting its output (if any),
@@ -167,7 +170,7 @@ class AppBuilder(object):
         import_prefix = cmd_config.get('import_prefix')
         components = cmd_config['components']
         components = tuple(self.utils.resolve_names(
-            components, module_name=import_prefix))
+            components, module_name=import_prefix, raise_exc=True))
         return components
 
     def init_cli_app(self):
@@ -204,19 +207,24 @@ class AppBuilder(object):
 class Utils:
     '''Exposes lazy import functions.
     '''
-    def resolve_name(self, name, module_name=None):
+    def resolve_name(self, name, module_name=None, raise_exc=False):
         '''Given a name string and module prefix, try to import the name.
         '''
         if module_name is None:
             module_name, _, name = name.rpartition('.')
-        module = __import__(module_name, globals(), locals(), [name], -1)
+        try:
+            module = __import__(module_name, globals(), locals(), [name], -1)
+        except ImportError:
+            if raise_exc:
+                raise
+            return
         return getattr(module, name)
 
-    def resolve_names(self, names, module_name=None):
+    def resolve_names(self, names, module_name=None, raise_exc=False):
         '''Try to import a sequence of names.
         '''
         for name in names:
-            yield self.resolve_name(name, module_name)
+            yield self.resolve_name(name, module_name, raise_exc=raise_exc)
 
 utils = Utils()
 
@@ -238,7 +246,8 @@ def set_shortcuts(obj, controller):
     obj.info = log.info
     obj.debug = log.debug
     obj.error = log.error
-    obj.warn = log.warn
+    obj.warning = obj.warn = log.warn
+    obj.critical = log.critical
 
 
 def run(config_obj):

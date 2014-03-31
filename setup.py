@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 from setuptools import setup, find_packages
-from pupa import __version__
+from banzai import __version__
 
 
 long_description = ''
@@ -15,7 +15,4 @@ setup(name='banzai',
       description='Tool for pipelining tasks together through a CLI interface',
       long_description=long_description,
       platforms=['any'],
-      install_requires=[
-        'cement==2.2.0'
-      ]
 )

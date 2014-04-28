@@ -171,7 +171,7 @@ class ShortcutSetter:
         self._set_shortcuts(type_)
         type_.args = ArgsAccessor()
 
-    def handle_MethodType(self, method):
+    def handle_method(self, method):
         '''Noop, because we can't set attributes on methods.
         '''
         pass
@@ -242,7 +242,8 @@ class ArgsAccessor:
     def argv(self):
         '''Return passed-in argv or sys.argv.
         '''
-        return getattr(self, '_argv', sys.argv)
+        config_obj = getattr(self.inst, 'config_obj', None) or self.inst
+        return getattr(config_obj, '_argv', None) or sys.argv
 
     @CachedAttr
     def args(self):
@@ -300,21 +301,10 @@ class ComponentLoader(StreamVisitor, UtilsMixin):
             component_name, module_name=self.import_prefix, raise_exc=True)
 
 
-class MethodTypeProxy:
-    '''Proxy get operations through to the wrapped MethodType. Handle
-    set operations on the proxy. Necessary so MethodType components supper
-    upstream.state
+class ComponentInvocationError(Exception):
+    '''Raised if component function signature requests args other than
+    the supported args (state, upstream, logger, etc).
     '''
-    def __init__(self, methodtype_instance):
-        object.__setattr__(self, 'func', methodtype_instance.__func__)
-
-    def __getattr__(self, *args, **kwargs):
-        func = object.__getattribute__(self, 'func')
-        return func.__getattribute__(*args, **kwargs)
-
-    def __setattr__(self, *args, **kwargs):
-        func = object.__getattribute__(self, 'func')
-        func.__setattr__(*args, **kwargs)
 
 
 class ComponentInvoker:
@@ -332,6 +322,22 @@ class ComponentInvoker:
     def __call__(self, *args, **kwargs):
         return self.dispatcher.dispatch(*args, **kwargs)
 
+    def _check_argnames(self, argdict, argnames, func):
+        unsupported = set(argnames) - set(argdict)
+        if unsupported:
+            msg = (
+                "Unsupported argument(s) %r were passed to "
+                "component function %r. Component functions can "
+                "only recieve the following arguments: %r.")
+            vals = (unsupported, func, argdict.keys())
+            raise ComponentInvocationError(msg % vals)
+
+    def _get_argdata(self, func):
+        argspec = inspect.getargspec(func)
+        shortcut_dict = self.state.set_shortcuts.shortcut_dict()
+        argdict = dict(shortcut_dict, upstream=self.upstream)
+        return argdict, argspec
+
     def handle_type(self, component_type):
         '''Types get instantiated, and upstream gets set.
         '''
@@ -339,35 +345,27 @@ class ComponentInvoker:
         comp.upstream = self.upstream
         return comp
 
-        # '''Bound methods get wrapped in a proxy object and treated
-        # like functions.
-        # '''
-        # # component_type = MethodTypeProxy(component_type)
-        # return self.handle_function(component_type)
-
     def handle_function(self, func):
         '''Functions that call for any aspects of the pipeline state in
         their argspec get those values passed in.
         '''
-        argspec = inspect.getargspec(func)
-        shortcut_dict = self.state.set_shortcuts.shortcut_dict()
-        argdict = dict(shortcut_dict, upstream=self.upstream)
-        args = tuple(map(argdict.get, argspec.args))
-        # Do arg checking here. Also: kwargs?
+        argdict, argspec = self._get_argdata(func)
+        argnames = argspec.args or []
+        self._check_argnames(argdict, argnames, func)
+        argnames += argspec.keywords or []
+        args = tuple(map(argdict.get, argnames))
         return func(*args)
 
     def handle_method(self, method):
         '''Functions that call for any aspects of the pipeline state in
         their argspec get those values passed in.
         '''
-        argspec = inspect.getargspec(method)
-        shortcut_dict = self.state.set_shortcuts.shortcut_dict()
-        argdict = dict(shortcut_dict, upstream=self.upstream)
-        args = tuple(map(argdict.get, argspec.args[1:]))
+        argdict, argspec = self._get_argdata(method)
+        argnames = argspec.args[1:] or []
+        self._check_argnames(argdict, argnames, method)
+        argnames += argspec.keywords or []
+        args = tuple(map(argdict.get, argnames))
         return method(*args)
-
-    def generic_handler(self, obj):
-        import pdb; pdb.set_trace()
 
 
 class ComponentAccessor:
@@ -378,7 +376,6 @@ class ComponentAccessor:
     def __init__(self, component_type, state, upstream=None):
         self.state = state
         self.component_type = component_type
-        # component_type.upstream = upstream
         self.upstream = upstream
         self.invoker = ComponentInvoker(state, upstream)
 
@@ -387,23 +384,20 @@ class ComponentAccessor:
         return tmpl.format(self, self.component_type)
 
     def __iter__(self):
-        yield from self.invoked_component
+        yield from self.invoked_component()
 
     def __call__(self):
-        return self.invoked_component()
+        return self.invoked_component()()
 
     def __get__(self, inst, cls):
-        return self.invoked_component
+        return self.invoked_component()
 
-    @CachedAttr
     def invoked_component(self):
         '''If the component is a class, this is a no-op, but if it's a
         function, any request args get passed to it. Doing this with a
         descriptor delays instantiation of the component until it's
         accessed, which is probably the least surprising way to go.
         '''
-        if self.component_type.__name__ == 'counter':
-            import pdb; pdb.set_trace()
         # We need to set shortcuts on the component type, not the instance.
         comp_type = self.component_type
         self.state.set_shortcuts(comp_type)
@@ -422,14 +416,28 @@ class PipelineRunner(ArgsMixin, ConfigMixin, UtilsMixin):
     '''
     def __init__(self, *components, config_obj=None, argv=None, args=None,
                  import_prefix=None, state=None, **kwargs):
+
+        # Set the components.
         if components is None and config_obj is None:
             msg = "Pipeline creation requires: 1) a list of components, or 2) a config_obj."
             raise ValueError(msg)
-        self.components = components or kwargs.get('components', [])
-        self.import_prefix = import_prefix
-        self.config_obj = config_obj or PipelineMixin()
+        components = components or kwargs.get('components', [])
+        components = components or getattr(config_obj, 'components', None)
+        self.components = components or []
+
+        # Setup the config obj.
+        config_obj = config_obj or PipelineConfig()
+        self.config_obj = config_obj
+
+        # Arg parsing needs these available from the config_obj.
+        self._args = config_obj._args = args
+        self._argv = config_obj._argv = argv
+
+        # State is available via a property.
         self._state = state
-        self._args = args
+
+        # Store this for component loading later on.
+        self.import_prefix = import_prefix
 
     @CachedAttr
     def state(self):
@@ -485,12 +493,12 @@ def pipeline(*components, **kwargs):
     return PipelineRunner(*components, **kwargs)
 
 
-class PipelineMixin:
+class PipelineConfig:
     '''Exposes default pipeline config functionality (nothing yet).
     '''
 
 
-class Pipeline(PipelineMixin):
+class Pipeline(PipelineConfig):
     '''A subclassable base, in case you want to run pipeline like:
 
     class Mine(Pipeline):
@@ -502,9 +510,13 @@ class Pipeline(PipelineMixin):
     for thing in Mine():
         pass
     '''
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
     def __iter__(self):
         runner = getattr(self, 'runner_cls', PipelineRunner)
-        yield from runner(config_obj=self)
+        yield from runner(config_obj=self, *self.args, **self.kwargs)
 
     def pipeline(self, *components, **kwargs):
         '''Call the equivalent of the top-level `pipeline` function, but

@@ -51,7 +51,8 @@ class UtilsMixin:
         except ImportError:
             if raise_exc:
                 raise
-        return getattr(module, name)
+        else:
+            return getattr(module, name)
 
     def resolve_names(self, names, module_name=None, raise_exc=False):
         '''Try to import a sequence of names.
@@ -218,7 +219,7 @@ class ArgsAccessor:
     '''
     def __get__(self, inst, cls):
         self.inst = inst
-        return self.args
+        return self.get_args()
 
     def get_parser(self):
         '''If self.state
@@ -245,8 +246,7 @@ class ArgsAccessor:
         config_obj = getattr(self.inst, 'config_obj', None) or self.inst
         return getattr(config_obj, '_argv', None) or sys.argv
 
-    @CachedAttr
-    def args(self):
+    def get_args(self):
         '''Args are taken from 1) self._args 2) self.argv,
         3) sys.argv, 4) self.state. Facilitates testing and running
         pipelines programmatically. Mixed object need only define _args,
@@ -256,10 +256,23 @@ class ArgsAccessor:
         '''
         inst = self.inst
 
-        # Return passed-in args first.
+        # Return passed-in args. First try the component.
         args = getattr(inst, '_args', None)
         if args is not None:
             return args
+
+        # Fall back to the config obj.
+        config_obj = getattr(inst, 'config_obj', None)
+        if config_obj is not None:
+            args = getattr(config_obj, '_args', None)
+            if args is not None:
+                return args
+
+        return self.parsed_args
+
+    @CachedAttr
+    def parsed_args(self):
+        inst = self.inst
 
         # Then try to parse from config obj or top-level `arguments`.
         arg_config = self.get_arg_config()
@@ -269,7 +282,7 @@ class ArgsAccessor:
         parser = self.get_parser()
         for args, kwargs in arg_config:
             parser.add_argument(*args, **kwargs)
-        inst._args = parser.parse_args(self.argv)
+        inst._args, _ = parser.parse_known_args(self.argv)
         return inst._args
 
 
@@ -415,7 +428,7 @@ class PipelineRunner(ArgsMixin, ConfigMixin, UtilsMixin):
     share a single state object. Multi-threaders beware.
     '''
     def __init__(self, *components, config_obj=None, argv=None, args=None,
-                 import_prefix=None, state=None, **kwargs):
+                 import_prefix=None, state=None, state_cls=None, **kwargs):
 
         # Set the components.
         if components is None and config_obj is None:
@@ -430,8 +443,10 @@ class PipelineRunner(ArgsMixin, ConfigMixin, UtilsMixin):
         self.config_obj = config_obj
 
         # Arg parsing needs these available from the config_obj.
-        self._args = config_obj._args = args
-        self._argv = config_obj._argv = argv
+        config_obj._args = args
+        config_obj._argv = argv
+        if getattr(config_obj, 'state_cls', None) is None:
+            config_obj.state_cls = state_cls
 
         # State is available via a property.
         self._state = state
@@ -439,14 +454,29 @@ class PipelineRunner(ArgsMixin, ConfigMixin, UtilsMixin):
         # Store this for component loading later on.
         self.import_prefix = import_prefix
 
+        # Config obj might need state.
+        config_obj.state = self.state
+
+    def get_state_subclass(self):
+        state_cls = getattr(self.config_obj, 'state_cls', None)
+        state_cls = state_cls
+        bases = []
+        if state_cls is not None:
+            bases.append(state_cls)
+            new_name = state_cls.__name__
+        else:
+            new_name = 'DefaultPipelineState'
+        if state_cls is not PipelineState:
+            bases.append(PipelineState)
+        return type(new_name, tuple(bases), {})
+
     @CachedAttr
     def state(self):
         '''Set the pipeline state.
         '''
         if self._state is not None:
             return self._state
-        state = getattr(self.config_obj, 'pipeline_state_cls', PipelineState)
-        return state()
+        return self.get_state_subclass()()
 
     def gen_components(self):
         '''Set upstream, state, and other required attributes on each
@@ -465,7 +495,10 @@ class PipelineRunner(ArgsMixin, ConfigMixin, UtilsMixin):
         self.set_shortcuts(self.state)
         for comp in self.gen_components():
             pass
+        comp = comp.invoked_component()
         if isinstance(comp, collections.Iterable):
+            yield from comp
+        elif hasattr(comp, '__iter__'):
             yield from comp
         elif callable(comp):
             return comp()
@@ -475,7 +508,7 @@ class PipelineRunner(ArgsMixin, ConfigMixin, UtilsMixin):
 
 
 
-class PipelineState(ArgsMixin, ConfigMixin):
+class PipelineState(ArgsMixin, ConfigMixin, UtilsMixin):
     '''An empty object where components can store state (like
     cumulative report data) and be sure it's shared among all
     components in the pipeline.
@@ -485,6 +518,18 @@ class PipelineState(ArgsMixin, ConfigMixin):
         '''Quick hack to avoid infinite recursion.
         '''
         return self
+
+    def pipeline(self, *components, **kwargs):
+        '''Call the equivalent of the top-level `pipeline` function, but
+        pass the parent pipeline's state and config_obj. Handy for delegating
+        to child pipelines.
+        '''
+        inherit_attrs = ('state', 'config_obj')
+        for attr in inherit_attrs:
+            if attr in kwargs:
+                continue
+            kwargs[attr] = getattr(self, attr)
+        return pipeline(*components, **kwargs)
 
 
 def pipeline(*components, **kwargs):
@@ -507,8 +552,11 @@ class Pipeline(PipelineConfig):
             'component2',
             ]
 
-    for thing in Mine():
-        pass
+    banzai.run(Mine)
+
+      or
+
+    yield from Mine()
     '''
     def __init__(self, *args, **kwargs):
         self.args = args
@@ -516,16 +564,19 @@ class Pipeline(PipelineConfig):
 
     def __iter__(self):
         runner = getattr(self, 'runner_cls', PipelineRunner)
-        yield from runner(config_obj=self, *self.args, **self.kwargs)
+        yield from runner(
+            config_obj=self._config_obj,
+            components=self._components, **self.kwargs)
 
-    def pipeline(self, *components, **kwargs):
-        '''Call the equivalent of the top-level `pipeline` function, but
-        pass this pipeline's state and config_obj. Handy for delegating
-        to child pipelines.
-        '''
-        inherit_attrs = ('state', 'config_obj')
-        for attr in inherit_attrs:
-            if attr in kwargs:
-                continue
-            kwargs[attr] = getattr(self, attr)
-        return pipeline(*components, **kwargs)
+    @property
+    def _config_obj(self):
+        return getattr(self, 'config_obj', self)
+
+    @property
+    def _components(self):
+        return getattr(self, 'components', self.args)
+
+
+def run(Pipeline):
+    for thing in Pipeline():
+        pass

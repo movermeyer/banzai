@@ -397,14 +397,15 @@ class ComponentAccessor:
         return tmpl.format(self, self.component_type)
 
     def __iter__(self):
-        yield from self.invoked_component()
+        yield from self.invoked_component
 
     def __call__(self):
-        return self.invoked_component()()
-
-    def __get__(self, inst, cls):
         return self.invoked_component()
 
+    def __get__(self, inst, cls):
+        return self.invoked_component
+
+    @CachedAttr
     def invoked_component(self):
         '''If the component is a class, this is a no-op, but if it's a
         function, any request args get passed to it. Doing this with a
@@ -495,7 +496,7 @@ class PipelineRunner(ArgsMixin, ConfigMixin, UtilsMixin):
         self.set_shortcuts(self.state)
         for comp in self.gen_components():
             pass
-        comp = comp.invoked_component()
+        comp = comp.invoked_component
         if isinstance(comp, collections.Iterable):
             yield from comp
         elif hasattr(comp, '__iter__'):
@@ -505,7 +506,6 @@ class PipelineRunner(ArgsMixin, ConfigMixin, UtilsMixin):
         else:
             msg = 'Pipeline component %r must be either callable or iterable.'
             raise TypeError(msg % comp)
-
 
 
 class PipelineState(ArgsMixin, ConfigMixin, UtilsMixin):

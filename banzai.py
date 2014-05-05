@@ -155,7 +155,6 @@ class ShortcutSetter:
         '''
         return dict(self.gen_shortcut_items())
 
-
     def __call__(self, dest):
         '''Set shortcuts on the obj if its type has a defined handler.
         '''
@@ -164,7 +163,6 @@ class ShortcutSetter:
     # -----------------------------------------------------------------------
     # The type-based handlers.
     # -----------------------------------------------------------------------
-
     def handle_type(self, type_):
         '''If the shortcuttable object is a class definition,
         set the shortcuts. Also set the .args descriptor.
@@ -180,7 +178,7 @@ class ShortcutSetter:
     def generic_handler(self, inst):
         '''Handle class instances. This will also be the dispatched method if
         someone tries to set shortcuts on an immutable object like an int.
-        Some
+        To do: catch those and complain.
         '''
         self._set_shortcuts(inst)
 
@@ -322,9 +320,7 @@ class ComponentInvocationError(Exception):
 
 class ComponentInvoker:
     '''Class is responsible for invoking each type of component. Types get
-    instantiated, functions get requested arguments passed to them, and
-    methods get wrapped with an attribute get/set proxy object and otherwise
-    treated like functions.
+    instantiated; functions/methods get requested arguments passed to them
     '''
     dispatcher = TypeDispatcher()
 
@@ -370,8 +366,8 @@ class ComponentInvoker:
         return func(*args)
 
     def handle_method(self, method):
-        '''Functions that call for any aspects of the pipeline state in
-        their argspec get those values passed in.
+        '''Methods that call for any aspects of the pipeline state in
+        their argspec get those values passed in. Excludes `self` arg.
         '''
         argdict, argspec = self._get_argdata(method)
         argnames = argspec.args[1:] or []
@@ -382,7 +378,7 @@ class ComponentInvoker:
 
 
 class ComponentAccessor:
-    '''This class enables class components to access the upstream component
+    '''This class enables component types to access the upstream component
     .upstream and .state while ensuring the `upstream` and any other
     requests args are passed to function components.
     '''
@@ -393,7 +389,7 @@ class ComponentAccessor:
         self.invoker = ComponentInvoker(state, upstream)
 
     def __repr__(self):
-        tmpl = '{0.__class__.__qualname__}({1.__qualname__}, state={0.state!r}, upstream={0.upstream!r})>'
+        tmpl = '{0.__class__.__qualname__}({1.__qualname__})>'
         return tmpl.format(self, self.component_type)
 
     def __iter__(self):
@@ -404,6 +400,15 @@ class ComponentAccessor:
 
     def __get__(self, inst, cls):
         return self.invoked_component
+
+    # ------------------------------------------------------------------------
+    # Also want to pass context manager events through to the component.
+    # ------------------------------------------------------------------------
+    def __enter__(self, *args, **kwargs):
+        return self.invoked_component.__enter__(*args, **kwargs)
+
+    def __exit__(self, *args, **kwargs):
+        return self.invoked_component.__exit__(*args, **kwargs)
 
     @CachedAttr
     def invoked_component(self):
@@ -426,7 +431,7 @@ class PipelineRunner(ArgsMixin, ConfigMixin, UtilsMixin):
     and passing it to the next component.
 
     One instance exists per component, but all component instances
-    share a single state object. Multi-threaders beware.
+    share a single state object.
     '''
     def __init__(self, *components, config_obj=None, argv=None, args=None,
                  import_prefix=None, state=None, state_cls=None, **kwargs):

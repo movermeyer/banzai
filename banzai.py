@@ -213,7 +213,7 @@ class ConfigMixin:
 #  Args mixin.
 #-----------------------------------------------------------------------------
 class ArgDict(dict):
-    __getattr__ = dict.__getitem__
+    __getattr__ = dict.get
 
 
 class ArgsAccessor:

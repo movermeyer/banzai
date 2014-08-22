@@ -32,7 +32,7 @@ from visitors import StreamVisitor, TypeVisitor
 from hercules import CachedAttr, set_default, SetDefault
 
 
-__version__ = '0'
+__version__ = '0.0'
 
 
 
@@ -212,6 +212,10 @@ class ConfigMixin:
 # ----------------------------------------------------------------------------
 #  Args mixin.
 #-----------------------------------------------------------------------------
+class ArgDict(dict):
+    __getattr__ = dict.__getitem__
+
+
 class ArgsAccessor:
     '''Handles the failover lookups of parsed args on types.
     '''
@@ -257,14 +261,19 @@ class ArgsAccessor:
         # Return passed-in args. First try the component.
         args = getattr(inst, '_args', None)
         if args is not None:
+            if isinstance(args, dict):
+                return ArgDict(args)
             return args
 
         # Fall back to the config obj.
-        config_obj = getattr(inst, 'config_obj', None)
-        if config_obj is not None:
-            args = getattr(config_obj, '_args', None)
-            if args is not None:
-                return args
+        for name in ('config_obj', 'state'):
+            config_obj = getattr(inst, name, None)
+            if config_obj is not None:
+                args = getattr(config_obj, '_args', None)
+                if args is not None:
+                    if isinstance(args, dict):
+                        return ArgDict(args)
+                    return args
 
         return self.parsed_args
 
@@ -482,7 +491,10 @@ class PipelineRunner(ArgsMixin, ConfigMixin, UtilsMixin):
         '''
         if self._state is not None:
             return self._state
-        return self.get_state_subclass()()
+        state = self.get_state_subclass()()
+        state._args = self.config_obj._args
+        state._argv = self.config_obj._argv
+        return state
 
     def gen_components(self):
         '''Set upstream, state, and other required attributes on each

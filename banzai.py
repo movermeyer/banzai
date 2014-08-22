@@ -502,6 +502,13 @@ class PipelineRunner(ArgsMixin, ConfigMixin, UtilsMixin):
         for comp in self.gen_components():
             pass
         comp = comp.invoked_component
+        if hasattr(comp, '__enter__'):
+            with comp:
+                yield from self.run_last_comp(comp)
+        else:
+            yield from self.run_last_comp(comp)
+
+    def run_last_comp(self, comp):
         if isinstance(comp, collections.Iterable):
             yield from comp
         elif hasattr(comp, '__iter__'):

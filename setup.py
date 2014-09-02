@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 from setuptools import setup, find_packages
-from banzai import __version__
 
+
+VERSION = '0'
 
 long_description = ''
 

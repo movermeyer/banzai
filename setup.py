@@ -7,7 +7,7 @@ VERSION = '0'
 long_description = ''
 
 setup(name='banzai',
-      version=__version__,
+      version=VERSION,
       packages=find_packages(),
       author='Thom Neale',
       author_email='twneale@gmail.com',

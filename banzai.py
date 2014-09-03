@@ -202,11 +202,17 @@ class ConfigMixin:
         runner_cls = getattr(self.config_obj, 'runner_cls', PipelineRunner)
         return runner_cls()
 
+    def _get_logger(self):
+        logger = logging.getLogger(self.appname)
+        if hasattr(self.args, 'loglevel'):
+            logger.setLevel(self.args.loglevel)
+        return logger
+
     @CachedAttr
     def logger(self):
         '''Allow objects to specify their own logger.
         '''
-        return set_default(self, '_logger', logging.getLogger(self.appname))
+        return set_default(self, '_logger', self._get_logger)
 
 
 # ----------------------------------------------------------------------------

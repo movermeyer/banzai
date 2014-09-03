@@ -205,8 +205,10 @@ class ConfigMixin:
     def _get_logger(self):
         logger = logging.getLogger(self.appname)
         loglevel = getattr(self.args, 'loglevel', None)
-        if loglevel is not None:
+        if isinstance(loglevel, str):
             loglevel = getattr(logging, loglevel)
+            logger.setLevel(loglevel)
+        elif isinstance(loglevel, int):
             logger.setLevel(loglevel)
         return logger
 

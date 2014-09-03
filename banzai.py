@@ -204,8 +204,10 @@ class ConfigMixin:
 
     def _get_logger(self):
         logger = logging.getLogger(self.appname)
-        if hasattr(self.args, 'loglevel'):
-            logger.setLevel(self.args.loglevel)
+        loglevel = getattr(self.args, 'loglevel', None)
+        if loglevel is not None:
+            loglevel = getattr(logging, loglevel)
+            logger.setLevel(loglevel)
         return logger
 
     @CachedAttr

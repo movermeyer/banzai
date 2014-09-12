@@ -24,6 +24,7 @@ import types
 import inspect
 import logging
 import argparse
+import functools
 import collections
 from operator import attrgetter
 
@@ -142,8 +143,9 @@ class ShortcutSetter:
             try:
                 setattr(dest, attr, val)
             except AttributeError:
-                msg = "Couldn't set shortcuts on immutable %r."
-                raise self.ShortcutSetError(msg % dest)
+                pass
+                # msg = "Couldn't set shortcuts on immutable %r."
+                # raise self.ShortcutSetError(msg % dest)
         return dest
 
     # -----------------------------------------------------------------------
@@ -358,6 +360,15 @@ class ComponentInvoker:
         shortcut_dict = self.state.set_shortcuts.shortcut_dict()
         argdict = dict(shortcut_dict, upstream=self.upstream)
         return argdict, argspec
+
+    def handle_tuple(self, args):
+        return component(*args)
+
+    def handle_Iterable(self, thing):
+        '''Need this generic handler so that ordinary iterables can be
+        passed as pipeline components.
+        '''
+        return thing
 
     def handle_type(self, component_type):
         '''Types get instantiated, and upstream gets set.
@@ -604,3 +615,14 @@ class Pipeline(PipelineConfig):
 def run(Pipeline):
     for thing in Pipeline():
         pass
+
+
+def component(function, *partial_args, **partial_kwargs):
+    '''A special partial and than can consumes upstream and repeated
+    calls partial'd function on the stream items.
+    '''
+    @functools.wraps(function)
+    def wrapped(upstream):
+        for token in upstream:
+            yield function(token, *partial_kwargs, **partial_kwargs)
+    return wrapped

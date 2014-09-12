@@ -35,7 +35,6 @@ from hercules import CachedAttr, set_default, SetDefault
 __version__ = '0'
 
 
-
 class UtilsMixin:
     '''Exposes lazy import functions.
     '''
@@ -145,6 +144,7 @@ class ShortcutSetter:
             except AttributeError:
                 msg = "Couldn't set shortcuts on immutable %r."
                 raise self.ShortcutSetError(msg % dest)
+        return dest
 
     # -----------------------------------------------------------------------
     # Public interface.
@@ -158,7 +158,7 @@ class ShortcutSetter:
     def __call__(self, dest):
         '''Set shortcuts on the obj if its type has a defined handler.
         '''
-        self.dispatcher.dispatch(dest)
+        return self.dispatcher.dispatch(dest)
 
     # -----------------------------------------------------------------------
     # The type-based handlers.
@@ -169,11 +169,12 @@ class ShortcutSetter:
         '''
         self._set_shortcuts(type_)
         type_.args = ArgsAccessor()
+        return type_
 
     def handle_method(self, method):
         '''Noop, because we can't set attributes on methods.
         '''
-        pass
+        return method
 
     def generic_handler(self, inst):
         '''Handle class instances. This will also be the dispatched method if
@@ -181,6 +182,7 @@ class ShortcutSetter:
         To do: catch those and complain.
         '''
         self._set_shortcuts(inst)
+        return inst
 
 
 class ConfigMixin:

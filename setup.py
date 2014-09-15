@@ -8,6 +8,7 @@ VERSION = '0'
 long_description = ''
 
 setup(name='banzai',
+      py_modules=['banzai'],
       version=VERSION,
       packages=find_packages(exclude="tests"),
       author='Thom Neale',

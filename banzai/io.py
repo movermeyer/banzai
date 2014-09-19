@@ -8,7 +8,9 @@ class RegexFilterer:
     '''Consumes a sequence of strings and drops/includes based on
     regexes.
     '''
-    def __init__(self, *, exclude=None, include=None, rgx_method='search'):
+    def __init__(self, *, upstream=None, exclude=None,
+                 include=None, rgx_method='search'):
+        self.upstream = upstream
         self.exclude = exclude or getattr(self, 'exclude', None)
         self.include = include or getattr(self, 'include', None)
         self._rgx_method = rgx_method

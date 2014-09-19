@@ -362,12 +362,16 @@ class ComponentInvoker:
         return argdict, argspec
 
     def handle_tuple(self, args):
-        return component(*args)
+        return make_step(*args)
 
     def handle_Iterable(self, thing):
         '''Need this generic handler so that ordinary iterables can be
         passed as pipeline components.
         '''
+        try:
+            setattr(thing, 'upstream', self.upstream)
+        except AttributeError:
+            pass
         return thing
 
     def handle_type(self, component_type):

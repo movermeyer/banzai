@@ -1,11 +1,12 @@
 import os
+import shutil
 import operator
 import tempfile
 
 import pytest
 
 import banzai
-from banzai.io import regex_filter, RegexFilterer
+import banzai.io
 
 
 class TestIOFunctions:
@@ -16,7 +17,7 @@ class TestIOFunctions:
 
         pipeline = banzai.pipeline(
             strings,
-            regex_filter(exclude=rgxs))
+            banzai.io.regex_filter(exclude=rgxs))
 
         expected = ('bar', 'fuzzy', 'cow.json')
         result = tuple(pipeline)
@@ -25,7 +26,7 @@ class TestIOFunctions:
     def test_regex_filter_exclude_type(self):
         strings = iter(['foo', 'bar', 'biz', 'fuzzy', 'cow.json'])
 
-        class Filterer(RegexFilterer):
+        class Filterer(banzai.io.RegexFilterer):
             exclude = ('oo', 'z$', '^z')
 
         pipeline = banzai.pipeline(strings, Filterer)
@@ -40,7 +41,7 @@ class TestIOFunctions:
 
         pipeline = banzai.pipeline(
             strings,
-            regex_filter(include=rgxs))
+            banzai.io.regex_filter(include=rgxs))
 
         expected = ('bar', 'biz', 'fuzzy', 'cow.json')
         result = tuple(pipeline)
@@ -49,7 +50,7 @@ class TestIOFunctions:
     def test_regex_filter_include_type(self):
         strings = iter(['foo', 'bar', 'biz', 'fuzzy', 'cow.json'])
 
-        class Filterer(RegexFilterer):
+        class Filterer(banzai.io.RegexFilterer):
             include = ('^b', '..z', '\.json$')
 
         pipeline = banzai.pipeline(strings, Filterer)
@@ -64,7 +65,7 @@ class TestIOFunctions:
 
         pipeline = banzai.pipeline(
             strings,
-            regex_filter(include=rgxs, exclude=['cow']))
+            banzai.io.regex_filter(include=rgxs, exclude=['cow']))
 
         with pytest.raises(ValueError):
             result = tuple(pipeline)
@@ -72,7 +73,7 @@ class TestIOFunctions:
     def test_assert_include_exclude_type_raises(self):
         strings = iter(['foo', 'bar', 'biz', 'fuzzy', 'cow.json'])
 
-        class Filterer(RegexFilterer):
+        class Filterer(banzai.io.RegexFilterer):
             include = ('^b', '..z', '\.json$')
             exclude = ('cow',)
 
@@ -82,9 +83,10 @@ class TestIOFunctions:
             result = tuple(pipeline)
 
 
-class TestFileFinder:
+class TestFileFinders:
 
-    def test_file_find(self):
+    @classmethod
+    def setup_class(cls):
         '''Set up a dir like
         dir/
           - foo
@@ -94,40 +96,65 @@ class TestFileFinder:
           cows/
             - bessie
             - moomoo
-            -bull
-
-        Then verify that os.walk and regex_filter find them correctly.
+            - bull
         '''
         join = os.path.join
-        tempdir = tempfile.mkdtemp()
+        cls.tempdir = tempfile.mkdtemp()
         for filename in ('foo', 'bar', 'baz', 'spam'):
-            with open(join(tempdir, filename), 'w') as f:
+            with open(join(cls.tempdir, filename), 'w') as f:
                 pass
-        os.mkdir(join(tempdir, 'cows'))
+        os.mkdir(join(cls.tempdir, 'cows'))
         for filename in ('bessie', 'moomoo', 'bull'):
-            with open(join(tempdir, 'cows', filename), 'w') as f:
+            with open(join(cls.tempdir, 'cows', filename), 'w') as f:
                 pass
 
-        class Walker:
+    @classmethod
+    def teardown_class(cls):
+        """ teardown any state that was previously setup with a call to
+        setup_class.
+        """
+        shutil.rmtree(cls.tempdir)
 
-            def __init__(self, *args):
-                self.args = args
-
-            def __iter__(self):
-                for thing in os.walk(*self.args):
-                    print(thing)
-                    yield thing
-
+    def test_adhoc_file_find(self):
+        '''Verify that os.walk and regex_filter find them correctly.
+        '''
         def flatten(upstream):
             for stringlist in upstream:
                 yield from iter(stringlist)
 
         rgxs = ('oo', 'm')
         pipeline = banzai.pipeline(
-            os.walk(tempdir),
+            os.walk(self.tempdir),
             operator.itemgetter(2),
             flatten,
-            regex_filter(include=rgxs))
+            banzai.io.regex_filter(include=rgxs))
 
         output = set(tuple(pipeline))
         assert output == {'spam', 'foo', 'moomoo'}
+
+    def test_file_find_match_relpath(self):
+        rgxs = ('oo', 'm')
+        file_finder = banzai.io.find_files(
+            start_dir=self.tempdir,
+            include=rgxs,
+            match_abspath=False)
+
+        pipeline = banzai.pipeline(file_finder)
+
+        output = set(tuple(pipeline))
+        expected_names = ('spam', 'foo', 'cows/moomoo')
+        join = os.path.join
+        expected = {join(self.tempdir, name) for name in expected_names}
+        assert output == expected
+
+    def test_file_find_match_abspath(self):
+        rgxs = ('moomoo', 'spam')
+        file_finder = banzai.io.find_files(self.tempdir, exclude=rgxs)
+
+        pipeline = banzai.pipeline(file_finder)
+
+        output = set(tuple(pipeline))
+        expected_names = ('bar', 'baz', 'cows/bessie', 'cows/bull', 'foo')
+        join = os.path.join
+        expected = {join(self.tempdir, name) for name in expected_names}
+        assert output == expected

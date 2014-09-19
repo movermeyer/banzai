@@ -1,3 +1,4 @@
+import os
 import re
 from hercules import CachedAttr
 
@@ -72,4 +73,27 @@ class RegexFilterer:
 def regex_filter(*, exclude=None, include=None, rgx_method='search'):
     return RegexFilterer(
         exclude=exclude, include=include, rgx_method=rgx_method)
+
+
+def find_files(start_dir, include=None, exclude=None, rgx_method='search', match_abspath=True):
+    '''Walks the filesystem starting at start_dir and yields absolute
+    filenames. If include or exclude is specified, applies them via a
+    regex_filter.
+    '''
+    filter_func = None
+    if include or exclude:
+        filterer = regex_filter(
+            exclude=exclude, include=include, rgx_method=rgx_method)
+        filter_func = filterer.get_filter_func()
+    join = os.path.join
+    for dr, subdirs, filenames in os.walk(start_dir):
+        for filename in filenames:
+            path = join(dr, filename)
+            if match_abspath:
+                matchable = path
+            else:
+                matchable = filename
+            if filter_func(matchable):
+                yield path
+
 

@@ -93,7 +93,8 @@ def find_files(start_dir, include=None, exclude=None, rgx_method='search', match
                 matchable = path
             else:
                 matchable = filename
-            if filter_func and filter_func(matchable):
-                yield path
+            if filter_func:
+                if filter_func(matchable):
+                    yield path
             else:
                 yield path

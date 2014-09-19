@@ -677,4 +677,3 @@ def make_step(function, *partial_args, **partial_kwargs):
         for token in upstream:
             yield function(token, *partial_kwargs, **partial_kwargs)
     return wrapped
-

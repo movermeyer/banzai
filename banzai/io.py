@@ -95,5 +95,3 @@ def find_files(start_dir, include=None, exclude=None, rgx_method='search', match
                 matchable = filename
             if filter_func(matchable):
                 yield path
-
-

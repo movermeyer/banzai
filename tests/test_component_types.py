@@ -2,7 +2,7 @@ import io
 import json
 
 
-from banzai import pipeline, component
+from banzai import pipeline, make_step
 
 
 def counter():
@@ -108,8 +108,8 @@ class TestIOFunctions:
         generator = iter(['{}', '[]', '{"a": 1}'])
         return pipeline(
             generator,
-            component(io.StringIO),
-            component(json.load))
+            make_step(io.StringIO),
+            make_step(json.load))
 
     def test_output(self):
         stream = self.get_pipeline()

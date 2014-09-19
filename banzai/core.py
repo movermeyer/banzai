@@ -621,7 +621,7 @@ def run(Pipeline):
         pass
 
 
-def component(function, *partial_args, **partial_kwargs):
+def make_step(function, *partial_args, **partial_kwargs):
     '''A special partial and than can consumes upstream and repeated
     calls partial'd function on the stream items.
     '''

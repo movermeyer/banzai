@@ -7,9 +7,6 @@ import banzai
 class RegexFilterer:
     '''Consumes a sequence of strings and drops/includes based on
     regexes.
-
-    The output of this component is designed to be passed to
-    itertools.compress.
     '''
     def __init__(self, *, exclude=None, include=None, rgx_method='search'):
         self.exclude = exclude or getattr(self, 'exclude', None)
@@ -19,8 +16,8 @@ class RegexFilterer:
     def __iter__(self):
         filter_func = self.get_filter_func()
         for string in self.upstream:
-            accept = filter_func(string)
-            yield accept, string
+            if filter_func(string):
+                yield string
 
     def get_rgxs(self, rgxs):
         if rgxs is None:

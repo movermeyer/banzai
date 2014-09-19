@@ -14,10 +14,7 @@ class TestIOFunctions:
             strings,
             regex_filter(exclude=rgxs))
 
-        expected = (
-            (False, 'foo'), (True, 'bar'),
-            (False, 'biz'), (True, 'fuzzy'),
-            (True, 'cow.json'))
+        expected = ('bar', 'fuzzy', 'cow.json')
         result = tuple(pipeline)
         assert result == expected
 
@@ -29,10 +26,7 @@ class TestIOFunctions:
 
         pipeline = banzai.pipeline(strings, Filterer)
 
-        expected = (
-            (False, 'foo'), (True, 'bar'),
-            (False, 'biz'), (True, 'fuzzy'),
-            (True, 'cow.json'))
+        expected = ('bar', 'fuzzy', 'cow.json')
         result = tuple(pipeline)
         assert result == expected
 
@@ -44,11 +38,7 @@ class TestIOFunctions:
             strings,
             regex_filter(include=rgxs))
 
-        expected = (
-            (False, 'foo'), (True, 'bar'),
-            (True, 'biz'), (True, 'fuzzy'),
-            (True, 'cow.json'))
-
+        expected = ('bar', 'biz', 'fuzzy', 'cow.json')
         result = tuple(pipeline)
         assert result == expected
 
@@ -60,11 +50,7 @@ class TestIOFunctions:
 
         pipeline = banzai.pipeline(strings, Filterer)
 
-        expected = (
-            (False, 'foo'), (True, 'bar'),
-            (True, 'biz'), (True, 'fuzzy'),
-            (True, 'cow.json'))
-
+        expected = ('bar', 'biz', 'fuzzy', 'cow.json')
         result = tuple(pipeline)
         assert result == expected
 

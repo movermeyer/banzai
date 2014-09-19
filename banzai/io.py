@@ -29,7 +29,7 @@ class RegexFilterer:
             for rgx in rgxs:
                 yield self.compile_rgx(rgx)
         else:
-            yield self.compile_rgx(rgx)
+            yield self.compile_rgx(rgxs)
 
     def compile_rgx(self, rgx):
         if isinstance(rgx, str):
@@ -93,5 +93,7 @@ def find_files(start_dir, include=None, exclude=None, rgx_method='search', match
                 matchable = path
             else:
                 matchable = filename
-            if filter_func(matchable):
+            if filter_func and filter_func(matchable):
+                yield path
+            else:
                 yield path

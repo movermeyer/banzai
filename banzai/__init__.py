@@ -1,3 +1,3 @@
 from banzai.core import (
-    pipeline, Pipeline, PipelineConfig, PipelineRunner,
+    run, pipeline, Pipeline, PipelineConfig, PipelineRunner,
     make_step, PipelineState, ComponentInvocationError)

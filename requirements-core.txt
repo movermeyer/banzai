@@ -1,0 +1,3 @@
+-e git+ssh://git@github.com/twneale/hercules.git#egg=hercules
+-e git+ssh://git@github.com/twneale/visitors.git#egg=visitors
+-e git+ssh://git@github.com/twneale/nmmd.git#egg=nmmd

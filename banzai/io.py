@@ -1,5 +1,6 @@
 import os
 import re
+import queue
 import collections
 import urllib.parse
 
@@ -153,15 +154,15 @@ class UrlFinder:
     '''
     def __init__(self, start_url):
         self.start_url = Url(start_url)
-        self.urls = collections.deque()
+        self.urls = queue.Queue()
         self.processed = set()
         self.added = set()
 
     def __iter__(self):
-        self.urls.append(self.start_url)
+        self.urls.put(self.start_url)
         while True:
             try:
-                url = self.urls.pop()
+                url = self.urls.get()
             except IndexError:
                 return
             if url in self.processed:
@@ -203,7 +204,7 @@ class UrlFinder:
         for child_url in self.gen_urls(str(url)):
             child_url = Url(child_url)
             if self.should_follow(child_url):
-                self.urls.append(child_url)
+                self.urls.put(child_url)
                 self.added.add(child_url)
             yield child_url
         self.processed.add(url)

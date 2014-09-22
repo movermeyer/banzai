@@ -1,3 +1,3 @@
--e git+https://github.com/twneale/nmmd.git#egg=hercules
+-e git+https://github.com/twneale/hercules.git#egg=hercules
 -e git+https://github.com/twneale/visitors.git#egg=visitors
 -e git+https://github.com/twneale/nmmd.git#egg=nmmd

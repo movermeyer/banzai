@@ -24,6 +24,7 @@ import types
 import inspect
 import logging
 import argparse
+import functools
 import collections
 from operator import attrgetter
 
@@ -33,7 +34,6 @@ from hercules import CachedAttr, set_default, SetDefault
 
 
 __version__ = '0.0'
-
 
 
 class UtilsMixin:
@@ -143,8 +143,10 @@ class ShortcutSetter:
             try:
                 setattr(dest, attr, val)
             except AttributeError:
-                msg = "Couldn't set shortcuts on immutable %r."
-                raise self.ShortcutSetError(msg % dest)
+                pass
+                # msg = "Couldn't set shortcuts on immutable %r."
+                # raise self.ShortcutSetError(msg % dest)
+        return dest
 
     # -----------------------------------------------------------------------
     # Public interface.
@@ -158,7 +160,7 @@ class ShortcutSetter:
     def __call__(self, dest):
         '''Set shortcuts on the obj if its type has a defined handler.
         '''
-        self.dispatcher.dispatch(dest)
+        return self.dispatcher.dispatch(dest)
 
     # -----------------------------------------------------------------------
     # The type-based handlers.
@@ -169,11 +171,12 @@ class ShortcutSetter:
         '''
         self._set_shortcuts(type_)
         type_.args = ArgsAccessor()
+        return type_
 
     def handle_method(self, method):
         '''Noop, because we can't set attributes on methods.
         '''
-        pass
+        return method
 
     def generic_handler(self, inst):
         '''Handle class instances. This will also be the dispatched method if
@@ -181,6 +184,7 @@ class ShortcutSetter:
         To do: catch those and complain.
         '''
         self._set_shortcuts(inst)
+        return inst
 
 
 class ConfigMixin:
@@ -343,9 +347,10 @@ class ComponentInvoker:
     '''
     dispatcher = TypeDispatcher()
 
-    def __init__(self, state, upstream):
+    def __init__(self, state, upstream, first):
         self.state = state
         self.upstream = upstream
+        self.first = first
 
     def __call__(self, *args, **kwargs):
         return self.dispatcher.dispatch(*args, **kwargs)
@@ -366,8 +371,23 @@ class ComponentInvoker:
         argdict = dict(shortcut_dict, upstream=self.upstream)
         return argdict, argspec
 
+    def handle_tuple(self, args):
+        return self.dispatcher.dispatch(make_step(*args))
+
+    def handle_Iterable(self, thing):
+        '''Need this generic handler so that ordinary iterables can be
+        passed as pipeline components.
+        '''
+        try:
+            setattr(thing, 'upstream', self.upstream)
+        except AttributeError:
+            pass
+        return thing
+
     def handle_type(self, component_type):
         '''Types get instantiated, and upstream gets set.
+
+        This should be upgraded to pass requested things to __init__.
         '''
         comp = component_type()
         comp.upstream = self.upstream
@@ -376,9 +396,14 @@ class ComponentInvoker:
     def handle_function(self, func):
         '''Functions that call for any aspects of the pipeline state in
         their argspec get those values passed in.
+
+        If the function doesn't take "upstream" as an argument, this
+        assumes it's a step, not a component.
         '''
         argdict, argspec = self._get_argdata(func)
         argnames = argspec.args or []
+        if 'upstream' not in argnames and not self.first:
+            return self.dispatcher.dispatch(make_step(func))
         self._check_argnames(argdict, argnames, func)
         argnames += argspec.keywords or []
         args = tuple(map(argdict.get, argnames))
@@ -387,28 +412,54 @@ class ComponentInvoker:
     def handle_method(self, method):
         '''Methods that call for any aspects of the pipeline state in
         their argspec get those values passed in. Excludes `self` arg.
+
+        If the method doesn't take "upstream" as an argument, this
+        assumes it's a step, not a component.
         '''
         argdict, argspec = self._get_argdata(method)
         argnames = argspec.args[1:] or []
+        if 'upstream' not in argnames and not self.first:
+            return self.dispatcher.dispatch(make_step(method))
         self._check_argnames(argdict, argnames, method)
         argnames += argspec.keywords or []
         args = tuple(map(argdict.get, argnames))
         return method(*args)
 
+    def handle_Callable(self, thing):
+        '''Required for callable instances and C functions like
+        operator.itemgetter.
+        '''
+        if hasattr(thing, '__call__'):
+            has_argsig = thing.__call__
+        else:
+            has_argsig = thing
+        try:
+            argdict, argspec = self._get_argdata(has_argsig)
+        except TypeError:
+            argnames = []
+        else:
+            argnames = argspec.args or []
+        if 'upstream' not in argnames and not self.first:
+            return self.dispatcher.dispatch(make_step(thing))
+        self._check_argnames(argdict, argnames, thing)
+        argnames += argspec.keywords or []
+        args = tuple(map(argdict.get, argnames))
+        return thing(*args)
 
 class ComponentAccessor:
     '''This class enables component types to access the upstream component
     .upstream and .state while ensuring the `upstream` and any other
     requests args are passed to function components.
     '''
-    def __init__(self, component_type, state, upstream=None):
+    def __init__(self, component_type, state, upstream=None, first=False):
         self.state = state
         self.component_type = component_type
         self.upstream = upstream
-        self.invoker = ComponentInvoker(state, upstream)
+        self.first = first
+        self.invoker = ComponentInvoker(state, upstream, first)
 
     def __repr__(self):
-        tmpl = '{0.__class__.__qualname__}({1.__qualname__})>'
+        tmpl = '{0.__class__.__qualname__}({1})>'
         return tmpl.format(self, self.component_type)
 
     def __iter__(self):
@@ -512,8 +563,21 @@ class PipelineRunner(ArgsMixin, ConfigMixin, UtilsMixin):
         '''
         loader = ComponentLoader(self.import_prefix)
         upstream = None
-        for comp_type in loader.itervisit(self.components):
-            component = ComponentAccessor(comp_type, self.state, upstream)
+        first = True
+        components = list(self.components)
+
+        # Handle generators specially. Otherwise the type dispatcher
+        # will accidentally exhaust them.
+        first = components[0]
+        if isinstance(first, types.GeneratorType):
+            comp_type = components.pop(0)
+            component = ComponentAccessor(comp_type, self.state, upstream, first=first)
+            first = False
+            upstream = component
+            yield component
+
+        for comp_type in loader.itervisit(components):
+            component = ComponentAccessor(comp_type, self.state, upstream, first=first)
             upstream = component
             yield component
 
@@ -614,3 +678,14 @@ class Pipeline(PipelineConfig):
 def run(Pipeline):
     for thing in Pipeline():
         pass
+
+
+def make_step(function, *partial_args, **partial_kwargs):
+    '''A special partial and than can consumes upstream and repeated
+    calls partial'd function on the stream items.
+    '''
+    @functools.wraps(function)
+    def wrapped(upstream):
+        for token in upstream:
+            yield function(token, *partial_kwargs, **partial_kwargs)
+    return wrapped

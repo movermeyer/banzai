@@ -1,4 +1,8 @@
-from banzai import pipeline
+import io
+import json
+
+
+from banzai import pipeline, make_step
 
 
 def counter():
@@ -95,3 +99,18 @@ class TestImportString(Base):
         return pipeline(
             'counter', 'fib',
             import_prefix='tests.test_component_types')
+
+
+class TestIOFunctions:
+    '''Test fib on a sequence of module-level functions.
+    '''
+    def get_pipeline(self):
+        generator = iter(['{}', '[]', '{"a": 1}'])
+        return pipeline(
+            generator,
+            make_step(io.StringIO),
+            make_step(json.load))
+
+    def test_output(self):
+        stream = self.get_pipeline()
+        assert tuple(stream) == ({}, [], {"a": 1})

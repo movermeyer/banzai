@@ -533,6 +533,9 @@ class PipelineRunner(ArgsMixin, ConfigMixin, UtilsMixin):
         # Config obj might need state.
         config_obj.state = self.state
 
+        if 'logger' in kwargs:
+            self._logger = kwargs.pop('logger')
+
     def get_state_subclass(self):
         state_cls = getattr(self.config_obj, 'state_cls', None)
         state_cls = state_cls
